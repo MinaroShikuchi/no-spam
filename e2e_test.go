@@ -2,15 +2,62 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 )
 
 const baseURL = "https://localhost:8443"
+
+func TestMain(m *testing.M) {
+	// 1. Setup Config
+	cfg := Config{
+		Addr:     ":8443",
+		CertFile: "certs/cert.pem",
+		KeyFile:  "certs/key.pem",
+		HTTPMode: false,
+	}
+
+	// 2. Start Server
+	srv, err := run(cfg)
+	if err != nil {
+		fmt.Printf("Failed to start server: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Run server in goroutine
+	go func() {
+		if _, err := os.Stat(cfg.CertFile); os.IsNotExist(err) {
+			_ = generateSelfSignedCert(cfg.CertFile, cfg.KeyFile)
+		}
+		if err := srv.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("Server failed: %v\n", err)
+		}
+	}()
+
+	// 3. Wait for readiness
+	time.Sleep(2 * time.Second)
+
+	// 4. Run Tests
+	code := m.Run()
+
+	// 5. Cleanup
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		fmt.Printf("Shutdown failed: %v\n", err)
+	}
+
+	// Cleanup DB? Maybe not needed for E2E if we want persistence or if we just want to execute.
+	// Ideally we clean up, but SQLite file might be locked.
+	// For now, let's just exit.
+	os.Exit(code)
+}
 
 // Helper to create HTTP client that ignores self-signed certs
 func newClient() *http.Client {

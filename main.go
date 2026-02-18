@@ -26,76 +26,82 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+type Config struct {
+	Addr     string
+	CertFile string
+	KeyFile  string
+	HTTPMode bool
+	FCMCreds string
+}
+
 func main() {
 	certFile := flag.String("cert", "certs/cert.pem", "Path to TLS certificate file")
 	keyFile := flag.String("key", "certs/key.pem", "Path to TLS key file")
 	addr := flag.String("addr", ":8443", "Address to listen on")
 	fcmCreds := flag.String("fcm-creds", "", "Path to Firebase credentials file (optional)")
 	httpMode := flag.Bool("http", false, "Run in HTTP mode (disable TLS)")
-	// fcmProjectID removed, inferred from creds
 	flag.Parse()
 
+	cfg := Config{
+		Addr:     *addr,
+		CertFile: *certFile,
+		KeyFile:  *keyFile,
+		HTTPMode: *httpMode,
+		FCMCreds: *fcmCreds,
+	}
+
+	srv, err := run(cfg)
+	if err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
+
+	if cfg.HTTPMode {
+		log.Printf("Server listening on %s (HTTP - TLS Disabled)", cfg.Addr)
+		log.Printf("WARNING: Traffic is unencrypted. Ensure you are running behind a secure proxy.")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("Server failed: ", err)
+		}
+	} else {
+		log.Printf("Server listening on %s (TLS 1.3 strict)", cfg.Addr)
+		// Check/Generate certs logic remains here or moves to run?
+		// Better to keep cert generation in main or run?
+		// Let's keep cert generation in main for now to keep run clean, or move it.
+		// Actually, run needs to set up the server. ListenAndServeTLS blocks.
+		// So run should return the configured server, and main calls ListenAndServe.
+
+		// Check if cert files exist, generate if not
+		if _, err := os.Stat(cfg.CertFile); os.IsNotExist(err) {
+			log.Printf("Certificate file %s not found. Generating self-signed certificate...", cfg.CertFile)
+			if err := generateSelfSignedCert(cfg.CertFile, cfg.KeyFile); err != nil {
+				log.Fatalf("Failed to generate certificate: %v", err)
+			}
+			log.Printf("Successfully generated self-signed certificate at %s and %s", cfg.CertFile, cfg.KeyFile)
+		} else {
+			log.Printf("Found existing certificate: %s", cfg.CertFile)
+		}
+
+		if err := srv.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile); err != nil && err != http.ErrServerClosed {
+			log.Fatal("Server failed: ", err)
+		}
+	}
+}
+
+func run(cfg Config) (*http.Server, error) {
 	// Initialize Store
 	s, err := store.NewSQLiteStore("no-spam.db")
 	if err != nil {
-		log.Fatalf("Failed to initialize store: %v", err)
+		return nil, err
 	}
 
-	// Check for admin user
-	hasAdmin, err := s.HasAdminUser()
-	if err != nil {
-		log.Printf("[AUTH] Failed to check for admin user: %v", err)
-	} else if !hasAdmin {
-		// Checks if user "admin" already exists (but implies role != admin)
-		user, err := s.GetUser("admin")
-		if err != nil {
-			log.Printf("[AUTH] Failed to check for existing 'admin' username: %v", err)
-		}
-
-		if user != nil {
-			// User "admin" exists but is not an admin role (otherwise HasAdminUser would be true)
-			if err := s.UpdateUserRole("admin", "admin"); err != nil {
-				log.Printf("[AUTH] Failed to promote 'admin' user: %v", err)
-			} else {
-				log.Printf("==================================================")
-				log.Printf("[AUTH] Promoted existing user 'admin' to admin role.")
-				log.Printf("==================================================")
-			}
-		} else {
-			// Generate random password
-			const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-			var b [8]byte
-			for i := 0; i < 8; i++ {
-				b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
-				time.Sleep(1 * time.Nanosecond)
-			}
-			password := string(b[:])
-
-			// Hash password
-			hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-			if err != nil {
-				log.Fatalf("[AUTH] Failed to hash password: %v", err)
-			}
-
-			// Create Admin
-			if err := s.CreateUser("admin", string(hash), "admin"); err != nil {
-				log.Fatalf("[AUTH] Failed to create admin user: %v", err)
-			}
-
-			log.Printf("==================================================")
-			log.Printf("[AUTH] Admin user created:")
-			log.Printf("[AUTH] Username: admin")
-			log.Printf("[AUTH] Password: %s", password)
-			log.Printf("==================================================")
-		}
-	}
+	// Check for admin user (logic kept same)
+	setupAdminUser(s)
 
 	// Initialize Hub
 	h := hub.NewHub(s)
 
 	// Initialize Connectors
 	mockConn := connectors.NewMockConnector()
-	fcmConn := connectors.NewFCMConnector(*fcmCreds)
+	fcmConn := connectors.NewFCMConnector(cfg.FCMCreds)
 	apnsConn := connectors.NewAPNSConnector()
 	webhookConn := connectors.NewWebhookConnector()
 
@@ -152,25 +158,19 @@ func main() {
 			admin.GET("/topics/:name/subscribers", handlers.GetSubscribersHandler(h))
 			admin.DELETE("/topics/:name/subscribers", handlers.ClearSubscribersHandler(h))
 			admin.GET("/topics/:name/queue", handlers.GetQueueHandler(h))
-			admin.POST("/users", handlers.CreateUserHandler(s))             // New route
-			admin.DELETE("/users/:username", handlers.DeleteUserHandler(s)) // New route
-			admin.GET("/users", handlers.ListUsersHandler(s))               // New route
+			admin.POST("/users", handlers.CreateUserHandler(s))
+			admin.DELETE("/users/:username", handlers.DeleteUserHandler(s))
+			admin.GET("/users", handlers.ListUsersHandler(s))
 			admin.GET("/token", handlers.GetTokenHandler(s))
 		}
 	}
 
 	server := &http.Server{
-		Addr:    *addr,
+		Addr:    cfg.Addr,
 		Handler: router,
 	}
 
-	if *httpMode {
-		log.Printf("Server listening on %s (HTTP - TLS Disabled)", *addr)
-		log.Printf("WARNING: Traffic is unencrypted. Ensure you are running behind a secure proxy.")
-		if err := server.ListenAndServe(); err != nil {
-			log.Fatal("Server failed: ", err)
-		}
-	} else {
+	if !cfg.HTTPMode {
 		// Configure TLS 1.3 Strict
 		tlsConfig := &tls.Config{
 			MinVersion: tls.VersionTLS13,
@@ -181,24 +181,66 @@ func main() {
 			},
 		}
 		server.TLSConfig = tlsConfig
-
-		log.Printf("Server listening on %s (TLS 1.3 strict)", *addr)
-
-		// Check if cert files exist, generate if not
-		if _, err := os.Stat(*certFile); os.IsNotExist(err) {
-			log.Printf("Certificate file %s not found. Generating self-signed certificate...", *certFile)
-			if err := generateSelfSignedCert(*certFile, *keyFile); err != nil {
-				log.Fatalf("Failed to generate certificate: %v", err)
-			}
-			log.Printf("Successfully generated self-signed certificate at %s and %s", *certFile, *keyFile)
-		} else {
-			log.Printf("Found existing certificate: %s", *certFile)
-		}
-
-		if err := server.ListenAndServeTLS(*certFile, *keyFile); err != nil {
-			log.Fatal("Server failed: ", err)
-		}
 	}
+
+	return server, nil
+}
+
+func setupAdminUser(s store.Store) {
+	hasAdmin, err := s.HasAdminUser()
+	if err != nil {
+		log.Printf("[AUTH] Failed to check for admin user: %v", err)
+		return
+	}
+
+	if hasAdmin {
+		return
+	}
+
+	// Checks if user "admin" already exists (but implies role != admin)
+	user, err := s.GetUser("admin")
+	if err != nil {
+		log.Printf("[AUTH] Failed to check for existing 'admin' username: %v", err)
+	}
+
+	if user != nil {
+		if err := s.UpdateUserRole("admin", "admin"); err != nil {
+			log.Printf("[AUTH] Failed to promote 'admin' user: %v", err)
+		} else {
+			log.Printf("==================================================")
+			log.Printf("[AUTH] Promoted existing user 'admin' to admin role.")
+			log.Printf("==================================================")
+		}
+		return
+	}
+
+	// Generate random password
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	var b [8]byte
+	for i := 0; i < 8; i++ {
+		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+		time.Sleep(1 * time.Nanosecond)
+	}
+	password := string(b[:])
+
+	// Hash password
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("[AUTH] Failed to hash password: %v", err)
+		return
+	}
+
+	// Create Admin
+	if err := s.CreateUser("admin", string(hash), "admin"); err != nil {
+		log.Printf("[AUTH] Failed to create admin user: %v", err)
+		return
+	}
+
+	log.Printf("==================================================")
+	log.Printf("[AUTH] Admin user created:")
+	log.Printf("[AUTH] Username: admin")
+	log.Printf("[AUTH] Password: %s", password)
+	log.Printf("==================================================")
 }
 
 func generateSelfSignedCert(certPath, keyPath string) error {
