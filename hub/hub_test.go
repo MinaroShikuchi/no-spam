@@ -84,7 +84,9 @@ func TestSubscriptions(t *testing.T) {
 	mockStore := NewMockStore()
 	h := NewHub(mockStore)
 	topic := "sub-topic"
-	h.CreateTopic(topic)
+	if err := h.CreateTopic(topic); err != nil {
+		t.Fatalf("CreateTopic failed: %v", err)
+	}
 
 	sub := store.Subscriber{
 		Topic:    topic,
@@ -123,7 +125,9 @@ func TestRoute_Broadcast(t *testing.T) {
 	h.RegisterConnector("mock", mc)
 
 	topic := "broadcast-topic"
-	h.CreateTopic(topic)
+	if err := h.CreateTopic(topic); err != nil {
+		t.Fatalf("CreateTopic failed: %v", err)
+	}
 
 	// Add subscriber
 	sub := store.Subscriber{
@@ -131,7 +135,9 @@ func TestRoute_Broadcast(t *testing.T) {
 		Token:    "sub-token-1",
 		Provider: "mock",
 	}
-	h.Subscribe(topic, sub)
+	if err := h.Subscribe(topic, sub); err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
 
 	// Route Message
 	msg := Message{

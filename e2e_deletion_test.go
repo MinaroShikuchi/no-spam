@@ -32,7 +32,7 @@ func TestE2E_TopicDeletionValidation(t *testing.T) {
 	}, adminToken)
 
 	// Get publisher token
-	resp, body = makeRequest(t, "GET", "/admin/token?username=test-del-publisher", nil, adminToken)
+	_, body = makeRequest(t, "GET", "/admin/token?username=test-del-publisher", nil, adminToken)
 	publisherToken := body["token"].(string)
 
 	// Create topic

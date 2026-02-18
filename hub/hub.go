@@ -196,7 +196,9 @@ func (h *Hub) attemptDelivery(ctx context.Context, sub store.Subscriber, payload
 	go func(c connectors.Connector, t string, p []byte, qID int64) {
 		// Store-and-Forward: If sent, mark delivered.
 		if err := c.Send(ctx, t, p); err == nil {
-			h.store.MarkDelivered(qID)
+			if err := h.store.MarkDelivered(qID); err != nil {
+				log.Printf("Failed to mark delivered: %v", err)
+			}
 		}
 	}(connector, sub.Token, payload, queueID)
 }

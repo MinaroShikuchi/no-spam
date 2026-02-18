@@ -292,7 +292,7 @@ func TestE2E_SubscriberFlow(t *testing.T) {
 
 	// Get subscriber token
 	t.Log("Step 3: Get subscriber token")
-	resp, body = makeRequest(t, "GET", "/admin/token?username=test-subscriber", nil, adminToken)
+	_, body = makeRequest(t, "GET", "/admin/token?username=test-subscriber", nil, adminToken)
 	subscriberToken := body["token"].(string)
 
 	// Create topic

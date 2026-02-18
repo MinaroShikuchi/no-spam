@@ -12,7 +12,7 @@ func TestRoute_Errors(t *testing.T) {
 	mockStore := NewMockStore()
 	h := NewHub(mockStore)
 	topic := "error-topic"
-	h.CreateTopic(topic)
+	_ = h.CreateTopic(topic)
 
 	msg := Message{
 		Topic:   topic,

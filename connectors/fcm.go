@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 
 	"no-spam/store"
 
@@ -30,7 +31,12 @@ func NewFCMConnector(credentialsFile string) *FCMConnector {
 	var opts []option.ClientOption
 
 	if credentialsFile != "" {
-		opts = append(opts, option.WithCredentialsFile(credentialsFile))
+		data, err := os.ReadFile(credentialsFile)
+		if err != nil {
+			log.Printf("[FCM] Failed to read credentials file: %v", err)
+			return nil
+		}
+		opts = append(opts, option.WithCredentialsJSON(data))
 	} else {
 		// Use default credentials (GOOGLE_APPLICATION_CREDENTIALS)
 		log.Println("[FCM] Initializing with default credentials...")
