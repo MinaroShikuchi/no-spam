@@ -2,26 +2,37 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
-	"encoding/json"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"flag"
 	"log"
+	"math/big"
+	"net"
 	"net/http"
-	"os"
-	"time"
-
 	"no-spam/connectors"
+	"no-spam/handlers"
+	"no-spam/hub"
 	"no-spam/middleware"
 	"no-spam/store"
+	"os"
+	"path/filepath"
+	"time"
 
-	"github.com/google/uuid"
-	"nhooyr.io/websocket"
+	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
-	certFile := flag.String("cert", "cert.pem", "Path to TLS certificate file")
-	keyFile := flag.String("key", "key.pem", "Path to TLS key file")
+	certFile := flag.String("cert", "certs/cert.pem", "Path to TLS certificate file")
+	keyFile := flag.String("key", "certs/key.pem", "Path to TLS key file")
 	addr := flag.String("addr", ":8443", "Address to listen on")
+	fcmCreds := flag.String("fcm-creds", "", "Path to Firebase credentials file (optional)")
+	httpMode := flag.Bool("http", false, "Run in HTTP mode (disable TLS)")
+	// fcmProjectID removed, inferred from creds
 	flag.Parse()
 
 	// Initialize Store
@@ -30,258 +41,219 @@ func main() {
 		log.Fatalf("Failed to initialize store: %v", err)
 	}
 
+	// Check for admin user
+	hasAdmin, err := s.HasAdminUser()
+	if err != nil {
+		log.Printf("[AUTH] Failed to check for admin user: %v", err)
+	} else if !hasAdmin {
+		// Checks if user "admin" already exists (but implies role != admin)
+		user, err := s.GetUser("admin")
+		if err != nil {
+			log.Printf("[AUTH] Failed to check for existing 'admin' username: %v", err)
+		}
+
+		if user != nil {
+			// User "admin" exists but is not an admin role (otherwise HasAdminUser would be true)
+			if err := s.UpdateUserRole("admin", "admin"); err != nil {
+				log.Printf("[AUTH] Failed to promote 'admin' user: %v", err)
+			} else {
+				log.Printf("==================================================")
+				log.Printf("[AUTH] Promoted existing user 'admin' to admin role.")
+				log.Printf("==================================================")
+			}
+		} else {
+			// Generate random password
+			const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+			var b [8]byte
+			for i := 0; i < 8; i++ {
+				b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+				time.Sleep(1 * time.Nanosecond)
+			}
+			password := string(b[:])
+
+			// Hash password
+			hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			if err != nil {
+				log.Fatalf("[AUTH] Failed to hash password: %v", err)
+			}
+
+			// Create Admin
+			if err := s.CreateUser("admin", string(hash), "admin"); err != nil {
+				log.Fatalf("[AUTH] Failed to create admin user: %v", err)
+			}
+
+			log.Printf("==================================================")
+			log.Printf("[AUTH] Admin user created:")
+			log.Printf("[AUTH] Username: admin")
+			log.Printf("[AUTH] Password: %s", password)
+			log.Printf("==================================================")
+		}
+	}
+
 	// Initialize Hub
-	hub := NewHub(s)
+	h := hub.NewHub(s)
 
 	// Initialize Connectors
 	mockConn := connectors.NewMockConnector()
-	fcmConn := connectors.NewFCMConnector()
+	fcmConn := connectors.NewFCMConnector(*fcmCreds)
 	apnsConn := connectors.NewAPNSConnector()
-	wsConn := connectors.NewWebSocketConnector()
+	webhookConn := connectors.NewWebhookConnector()
 
 	// Register Connectors
-	hub.RegisterConnector("mock", mockConn)
-	hub.RegisterConnector("fcm", fcmConn)
-	hub.RegisterConnector("apns", apnsConn)
-	hub.RegisterConnector("websocket", wsConn)
+	h.RegisterConnector("mock", mockConn)
+	h.RegisterConnector("fcm", fcmConn)
+	h.RegisterConnector("apns", apnsConn)
+	h.RegisterConnector("webhook", webhookConn)
 
-	// Define Handlers
-	mux := http.NewServeMux()
+	// Start background queue processor
+	ctx := context.Background()
+	h.StartQueueProcessor(ctx)
 
-	// /subscribe endpoint - Secured by JWT Middleware
-	mux.Handle("/subscribe", middleware.JWTAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if middleware.GetRole(r.Context()) != "subscriber" {
-			http.Error(w, "Forbidden: Only subscribers can subscribe", http.StatusForbidden)
-			return
+	// Initialize Gin
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+	router.Use(gin.Recovery())
+
+	// Public routes (no auth)
+	router.POST("/register", handlers.RegisterHandler(s))
+	router.POST("/login", handlers.LoginHandler(s))
+
+	// Authenticated routes
+	auth := router.Group("/")
+	auth.Use(middleware.JWTAuthMiddleware())
+	{
+		auth.POST("/refresh", handlers.RefreshHandler())
+
+		// Subscriber routes
+		subscribers := auth.Group("/")
+		subscribers.Use(middleware.RequireRole("subscriber"))
+		{
+			subscribers.POST("/subscribe", handlers.SubscribeHandler(h))
+			subscribers.POST("/unsubscribe", handlers.UnsubscribeHandler(h))
+			subscribers.GET("/topics", handlers.TopicsHandler(h))
 		}
 
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
+		// Publisher routes
+		publishers := auth.Group("/")
+		publishers.Use(middleware.RequireRole("publisher"))
+		{
+			publishers.POST("/send", handlers.SendHandler(h))
+			publishers.GET("/stats", handlers.StatsHandler(h))
 		}
 
-		type SubscriptionRequest struct {
-			Topic    string `json:"topic"`
-			Token    string `json:"token"`
-			Provider string `json:"provider"`
+		// Admin routes
+		admin := auth.Group("/admin")
+		admin.Use(middleware.RequireRole("admin"))
+		{
+			admin.GET("/topics", handlers.ListTopicsHandler(h))
+			admin.POST("/topics", handlers.CreateTopicHandler(h))
+			admin.DELETE("/topics/:name", handlers.DeleteTopicHandler(h))
+			admin.GET("/topics/:name/messages", handlers.GetMessagesHandler(h))
+			admin.DELETE("/topics/:name/messages", handlers.ClearMessagesHandler(h))
+			admin.GET("/topics/:name/subscribers", handlers.GetSubscribersHandler(h))
+			admin.DELETE("/topics/:name/subscribers", handlers.ClearSubscribersHandler(h))
+			admin.GET("/token", handlers.GetTokenHandler())
 		}
-
-		var req SubscriptionRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		if req.Topic == "" || req.Token == "" || req.Provider == "" {
-			http.Error(w, "Missing required fields (topic, token, provider)", http.StatusBadRequest)
-			return
-		}
-
-		if err := hub.Subscribe(req.Topic, store.Subscriber{
-			Token:    req.Token,
-			Provider: req.Provider,
-		}); err != nil {
-			log.Printf("Subscribe error: %v", err)
-			// Simple check for "constraint" or "unique" in error string (SQLite specific)
-			// In prod, check specific sqlite error code.
-			http.Error(w, "Already subscribed or error: "+err.Error(), http.StatusConflict)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Subscribed"))
-	})))
-
-	// /unsubscribe endpoint - Secured by JWT Middleware
-	mux.Handle("/unsubscribe", middleware.JWTAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if middleware.GetRole(r.Context()) != "subscriber" {
-			http.Error(w, "Forbidden: Only subscribers can unsubscribe", http.StatusForbidden)
-			return
-		}
-
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		type UnsubscriptionRequest struct {
-			Topic string `json:"topic"`
-			Token string `json:"token"`
-		}
-
-		var req UnsubscriptionRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		if req.Topic == "" || req.Token == "" {
-			http.Error(w, "Missing required fields (topic, token)", http.StatusBadRequest)
-			return
-		}
-
-		if err := hub.Unsubscribe(req.Topic, req.Token); err != nil {
-			log.Printf("Unsubscribe error: %v", err)
-			http.Error(w, fmtError(err), http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Unsubscribed"))
-	})))
-
-	// /stats endpoint - Secured by JWT Middleware
-	mux.Handle("/stats", middleware.JWTAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Only publishers (admins) should see stats
-		if middleware.GetRole(r.Context()) != "publisher" {
-			http.Error(w, "Forbidden: Only publishers can view stats", http.StatusForbidden)
-			return
-		}
-
-		stats := map[string]interface{}{
-			"total_messages_sent":          hub.GetTotalMessagesSent(),
-			"active_websocket_connections": wsConn.ConnectionCount(),
-			"active_subscriptions":         hub.GetSubscriptionCount(),
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(stats)
-	})))
-
-	// /send endpoint - Secured by JWT Middleware
-	mux.Handle("/send", middleware.JWTAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if middleware.GetRole(r.Context()) != "publisher" {
-			http.Error(w, "Forbidden: Only publishers can send messages", http.StatusForbidden)
-			return
-		}
-
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		var msg Message
-		// Limit request body to 1MB
-		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
-		if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		if err := hub.Route(ctx, msg); err != nil {
-			log.Printf("Error routing message: %v", err)
-			http.Error(w, fmtError(err), http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Message sent"))
-	})))
-
-	// /ws endpoint - Secured by Query Param Token
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		token := r.URL.Query().Get("token")
-		role, err := middleware.ValidateWSToken(token)
-		if err != nil {
-			http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
-			return
-		}
-
-		if role != "subscriber" {
-			http.Error(w, "Forbidden: Only subscribers can connect to WebSocket", http.StatusForbidden)
-			return
-		}
-
-		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-			InsecureSkipVerify: false, // Enforce same origin by default, or adjust as needed
-			// OriginPatterns: []string{"*"}, // Uncomment to allow all origins during dev
-		})
-		if err != nil {
-			log.Printf("Failed to accept websocket: %v", err)
-			return
-		}
-
-		// Generate Audit ID for logs
-		connID := uuid.New().String()
-
-		// Add connection to connector
-		log.Printf("New WebSocket connection: %s (User: ...%s)", connID, token[len(token)-6:])
-		wsConn.AddConnection(token, c)
-
-		// Replay Pending Messages (Offline Queue)
-		go func() {
-			pending, err := s.GetPendingMessages(token)
-			if err != nil {
-				log.Printf("[%s] Failed to fetch pending messages: %v", connID, err)
-				return
-			}
-			if len(pending) > 0 {
-				log.Printf("[%s] Replaying %d pending messages", connID, len(pending))
-				ctx := context.Background()
-				for _, item := range pending {
-					if err := wsConn.Send(ctx, token, item.Payload); err == nil {
-						s.MarkDelivered(item.ID)
-					} else {
-						log.Printf("[%s] Failed to replay message %d: %v", connID, item.ID, err)
-						// Stop replaying if sending fails? Yes, assume broken connection
-						break
-					}
-				}
-			}
-		}()
-
-		// Ensure we remove the connection when it closes
-		defer func() {
-			wsConn.RemoveConnection(token)
-			c.Close(websocket.StatusInternalError, "server stopped")
-			log.Printf("WebSocket connection closed: %s", connID)
-		}()
-
-		// Read loop to detect disconnect
-		ctx := r.Context()
-		for {
-			_, _, err := c.Read(ctx)
-			if err != nil {
-				// Normal closure or error triggers return, executing defer
-				break
-			}
-		}
-	})
-
-	// Configure TLS 1.3 Strict
-	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		CipherSuites: []uint16{
-			tls.TLS_AES_128_GCM_SHA256,
-			tls.TLS_AES_256_GCM_SHA384,
-			tls.TLS_CHACHA20_POLY1305_SHA256,
-		},
 	}
 
 	server := &http.Server{
-		Addr:      *addr,
-		Handler:   mux,
-		TLSConfig: tlsConfig,
+		Addr:    *addr,
+		Handler: router,
 	}
 
-	log.Printf("Server listening on %s (TLS 1.3 strict)", *addr)
-	log.Printf("Ensure you have %s and %s, or provide via flags", *certFile, *keyFile)
+	if *httpMode {
+		log.Printf("Server listening on %s (HTTP - TLS Disabled)", *addr)
+		log.Printf("WARNING: Traffic is unencrypted. Ensure you are running behind a secure proxy.")
+		if err := server.ListenAndServe(); err != nil {
+			log.Fatal("Server failed: ", err)
+		}
+	} else {
+		// Configure TLS 1.3 Strict
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS13,
+			CipherSuites: []uint16{
+				tls.TLS_AES_128_GCM_SHA256,
+				tls.TLS_AES_256_GCM_SHA384,
+				tls.TLS_CHACHA20_POLY1305_SHA256,
+			},
+		}
+		server.TLSConfig = tlsConfig
 
-	// Check if cert files exist, if not, warn but try to start (will fail)
-	// For dev experience, we could generate them, but prompt didn't ask.
-	if _, err := os.Stat(*certFile); os.IsNotExist(err) {
-		log.Printf("WARNING: Certificate file %s not found. Server will fail to start.", *certFile)
-	}
+		log.Printf("Server listening on %s (TLS 1.3 strict)", *addr)
 
-	err = server.ListenAndServeTLS(*certFile, *keyFile)
-	if err != nil {
-		log.Fatal("Server failed: ", err)
+		// Check if cert files exist, generate if not
+		if _, err := os.Stat(*certFile); os.IsNotExist(err) {
+			log.Printf("Certificate file %s not found. Generating self-signed certificate...", *certFile)
+			if err := generateSelfSignedCert(*certFile, *keyFile); err != nil {
+				log.Fatalf("Failed to generate certificate: %v", err)
+			}
+			log.Printf("Successfully generated self-signed certificate at %s and %s", *certFile, *keyFile)
+		} else {
+			log.Printf("Found existing certificate: %s", *certFile)
+		}
+
+		if err := server.ListenAndServeTLS(*certFile, *keyFile); err != nil {
+			log.Fatal("Server failed: ", err)
+		}
 	}
 }
 
-func fmtError(err error) string {
-	return "Error: " + err.Error()
+func generateSelfSignedCert(certPath, keyPath string) error {
+	// ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(certPath), 0755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
+		return err
+	}
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"no-spam"},
+		},
+		NotBefore: time.Now(),
+		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
+
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	// Add localhost and IP addresses
+	template.DNSNames = append(template.DNSNames, "localhost")
+	template.IPAddresses = append(template.IPAddresses, net.ParseIP("127.0.0.1"))
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return err
+	}
+
+	// Save Cert
+	certOut, err := os.Create(certPath)
+	if err != nil {
+		return err
+	}
+	defer certOut.Close()
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		return err
+	}
+
+	// Save Key
+	keyOut, err := os.Create(keyPath)
+	if err != nil {
+		return err
+	}
+	defer keyOut.Close()
+	privBytes := x509.MarshalPKCS1PrivateKey(priv)
+	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}); err != nil {
+		return err
+	}
+
+	return nil
 }

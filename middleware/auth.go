@@ -1,12 +1,13 @@
 package middleware
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -20,23 +21,23 @@ func GetJWTSecret() []byte {
 	return []byte(secret)
 }
 
-// JWTAuthMiddleware verifies the Authorization header.
-func JWTAuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
+// JWTAuthMiddleware verifies the Authorization header (Gin version).
+func JWTAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			http.Error(w, "Authorization header missing", http.StatusUnauthorized)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header missing"})
 			return
 		}
 
 		parts := strings.Split(authHeader, " ")
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			http.Error(w, "Invalid Authorization header format", http.StatusUnauthorized)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid Authorization header format"})
 			return
 		}
 
 		tokenString := parts[1]
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
@@ -44,53 +45,82 @@ func JWTAuthMiddleware(next http.Handler) http.Handler {
 		})
 
 		if err != nil || !token.Valid {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			return
 		}
 
-		// Token is valid, proceed
-		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			if role, ok := claims["role"].(string); ok {
-				ctx := context.WithValue(r.Context(), "role", role)
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
-			}
+		if claims, ok := token.Claims.(*Claims); ok {
+			c.Set("role", claims.Role)
+			c.Set("username", claims.Subject)
 		}
 
-		next.ServeHTTP(w, r)
-	})
+		c.Next()
+	}
 }
 
-// CheckRoleFromContext helper
-func GetRole(ctx context.Context) string {
-	if role, ok := ctx.Value("role").(string); ok {
-		return role
+// RequireRole middleware to check if user has specific role
+func RequireRole(role string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userRole, exists := c.Get("role")
+		if !exists || userRole != role {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("Forbidden: Only %ss can access this endpoint", role)})
+			return
+		}
+		c.Next()
+	}
+}
+
+// GetUsername helper for Gin context
+func GetUsername(c *gin.Context) string {
+	if username, exists := c.Get("username"); exists {
+		if str, ok := username.(string); ok {
+			return str
+		}
 	}
 	return ""
 }
 
-// ValidateWSToken validates a token from a query parameter and returns the role.
-func ValidateWSToken(tokenString string) (string, error) {
-	if tokenString == "" {
-		return "", fmt.Errorf("token missing")
+// GetRole helper for Gin context
+func GetRole(c *gin.Context) string {
+	if role, exists := c.Get("role"); exists {
+		if str, ok := role.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
+type Claims struct {
+	Role string `json:"role"`
+	jwt.RegisteredClaims
+}
+
+func GenerateToken(username, role string) (string, error) {
+	claims := Claims{
+		Role: role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   username,
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
 	}
 
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(GetJWTSecret())
+}
+
+func ParseToken(tokenString string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		return GetJWTSecret(), nil
 	})
 
-	if err != nil || !token.Valid {
-		return "", fmt.Errorf("invalid token: %v", err)
+	if err != nil {
+		return nil, err
 	}
 
-	if claims, ok := token.Claims.(jwt.MapClaims); ok {
-		if role, ok := claims["role"].(string); ok {
-			return role, nil
-		}
+	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+		return claims, nil
 	}
 
-	return "", nil
+	return nil, fmt.Errorf("invalid token")
 }

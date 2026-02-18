@@ -8,19 +8,24 @@ Designed for security (TLS 1.3, JWT) and extensibility.
 - **Hub & Connector Pattern**: Centralized routing with hot-swappable providers.
 - **Connectors**:
   - **Mock**: For testing.
-  - **FCM**: Skeleton for Firebase Cloud Messaging.
-  - **APNS**: Skeleton for Apple Push Notification Service.
-  - **WebSocket**: Real-time connections using `nhooyr.io/websocket`.
+  - **FCM**: Firebase Cloud Messaging.
+  - **APNS**: Apple Push Notification Service.
+  - **Webhook**: Generic HTTP POST integration (e.g., Discord/Slack/Custom).
 - **Security**:
-  - **JWT Middleware**: Enforces signed tokens on API and WebSockets.
+  - **JWT Middleware**: Enforces signed tokens on API endpoints.
+  - **RBAC**: Role-based access control (`admin`, `publisher`, `subscriber`).
   - **TLS 1.3 Strict**: Configured to reject older protocols.
+- **Admin**:
+  - Auto-generated admin user on startup.
+  - Token generation via API.
+  - Topic inspection and management.
 
 ## Getting Started
 
 ### Prerequisites
 
 - Go 1.22+
-- TLS Certificates (`cert.pem`, `key.pem`) for local development (or use flags).
+- TLS Certificates (`cert.pem`, `key.pem`) for local development.
 
 ### Installation
 
@@ -43,7 +48,7 @@ Run the server:
 
 ```bash
 export JWT_SECRET="your-secret-key"
-go run main.go hub.go
+go run .
 ```
 
 Or build and run:
@@ -53,34 +58,51 @@ go build -o no-spam .
 ./no-spam
 ```
 
-Flags:
+**First Run**:
+- If no admin user exists, the server creates one and logs credentials.
+- If certificates are missing, the server **auto-generates** self-signed certs in `certs/` directory (unless `-http` is used).
+
+#### Flags
 - `-addr`: Address to listen on (default `:8443`)
-- `-cert`: Path to cert file (default `cert.pem`)
-- `-key`: Path to key file (default `key.pem`)
+- `-cert`: Path to cert file (default `certs/cert.pem`)
+- `-key`: Path to key file (default `certs/key.pem`)
+- `-fcm-creds`: Path to Firebase Service Account JSON (optional)
+- `-http`: Run in HTTP mode (disable TLS). Useful for reverse proxies.
+
+### Authentication
+
+All API endpoints (except login/register) require a **Bearer Token**.
+Roles:
+- **subscriber**: Can subscribe/unsubscribe.
+- **publisher**: Can publish messages.
+- **admin**: Full access to admin endpoints.
+
+#### 1. Public Endpoints
+- **POST** `/login`: Get JWT token.
+- **POST** `/register`: Create new user (default role: `subscriber`).
+
+#### 2. Admin Token Generation
+Admins can generate tokens for any role:
+**GET** `/admin/token?role=publisher`
+Headers: `Authorization: Bearer <admin-token>`
 
 ### API Usage
 
-#### Send Notification
+#### Send Notification (Publisher)
 **POST** `/send`
-Headers: `Authorization: Bearer <valid-jwt>`
+Headers: `Authorization: Bearer <publisher-token>`
 
 ```json
 {
   "provider": "mock",
   "token": "user-device-token",
-  "payload": "SGVsbG8gV29ybGQ=" // Base64 encoded payload, or raw bytes if JSON allows
+  "payload": "SGVsbG8gV29ybGQ=" // Base64 encoded payload
 }
 ``` 
-*Note: Payload type in Go struct is `[]byte`, relying on JSON base64 encoding/decoding automatically.*
 
-#### WebSocket Connection
-**GET** `/ws?token=<valid-jwt>`
-- Connect with a WebSocket client.
-- Messages sent to `provider: websocket` with this token will be pushed to this socket.
-
-#### Subscribe to Topic
+#### Subscribe to Topic (Subscriber)
 **POST** `/subscribe`
-Headers: `Authorization: Bearer <valid-jwt>`
+Headers: `Authorization: Bearer <subscriber-token>`
 
 ```json
 {
@@ -90,66 +112,40 @@ Headers: `Authorization: Bearer <valid-jwt>`
 }
 ```
 
-#### Broadcast Message
-**POST** `/send`
-Headers: `Authorization: Bearer <valid-jwt>`
+#### Subscribe with Webhook
+**POST** `/subscribe`
+Headers: `Authorization: Bearer <subscriber-token>`
 
 ```json
 {
   "topic": "alerts",
-  "payload": "Emergency Broadcast"
+  "provider": "webhook",
+  "webhook": "https://discord.com/api/webhooks/..."
 }
 ```
 
+> **Note**: The published payload for a webhook provider must match the format expected by the webhook service (e.g., for Discord, it must be `{"content": "message"}`).
 
+**History Replay**: Upon subscribing, the last 20 messages for the topic are immediately queued for delivery.
 
-#### Unsubscribe from Topic
-**POST** `/unsubscribe`
-Headers: `Authorization: Bearer <valid-jwt>`
+### Admin API
 
-```json
-{
-  "topic": "alerts",
-  "token": "user-device-token"
-}
-```
+Requires `role: admin`.
 
-### Role-Based Access Control (RBAC)
+- **GET** `/admin/topics`: List all topics.
+- **POST** `/admin/topics`: Create a topic.
+- **DELETE** `/admin/topics/:name`: Delete a topic (must be empty).
+- **GET** `/admin/topics/:name/messages`: Inspect topic queue.
+- **GET** `/admin/topics/:name/subscribers`: List subscribers.
 
-Tokens must have a `role` claim (`publisher` or `subscriber`).
+## Extensibility
 
-**Generate Publisher Token**:
-```bash
-go run cmd/token-gen/main.go -role publisher
-```
+To add a new connector:
 
-**Generate Subscriber Token**:
-```bash
-go run cmd/token-gen/main.go -role subscriber
-```
-
-- **Publishers**: Authorized to `/send`.
-- **Subscribers**: Authorized to `/subscribe` and connect to WebSocket.
-
-1. **Create the implementation** in `connectors/myconnector.go`:
-   ```go
-   package connectors
-   import "context"
-
-   type MyConnector struct {}
-   
-   func NewMyConnector() *MyConnector { return &MyConnector{} }
-
-   func (m *MyConnector) Send(ctx context.Context, token string, payload []byte) error {
-       // Implement logic
-       return nil
-   }
-   ```
-
+1. **Create the implementation** in `connectors/myconnector.go` satisfying the `Connector` interface.
 2. **Register it** in `main.go`:
    ```go
    myConn := connectors.NewMyConnector()
    hub.RegisterConnector("my-provider", myConn)
    ```
-
 3. **Use it**: Send messages with `"provider": "my-provider"`.
