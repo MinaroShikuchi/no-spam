@@ -69,7 +69,7 @@ func (s *SQLiteStore) initSchema() error {
 		}
 	}
 	// Attempt to add username column if it doesn't exist (migration for dev)
-	s.db.Exec(`ALTER TABLE subscriptions ADD COLUMN username TEXT;`)
+	_, _ = s.db.Exec(`ALTER TABLE subscriptions ADD COLUMN username TEXT;`)
 	return nil
 }
 
@@ -309,7 +309,9 @@ func (s *SQLiteStore) ClearTopicMessages(topic string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	// Delete from queue first (constraint)
 	_, err = tx.Exec(`DELETE FROM queue WHERE message_id IN (SELECT id FROM messages WHERE topic = ?)`, topic)

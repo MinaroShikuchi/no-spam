@@ -70,9 +70,16 @@ func TestListTopics(t *testing.T) {
 	}
 
 	// Create topics
-	store.CreateTopic("topic1")
-	store.CreateTopic("topic2")
-	store.CreateTopic("topic3")
+	// Create topics
+	if err := store.CreateTopic("topic1"); err != nil {
+		t.Fatalf("Failed to create topic1: %v", err)
+	}
+	if err := store.CreateTopic("topic2"); err != nil {
+		t.Fatalf("Failed to create topic2: %v", err)
+	}
+	if err := store.CreateTopic("topic3"); err != nil {
+		t.Fatalf("Failed to create topic3: %v", err)
+	}
 
 	topics, err = store.ListTopics()
 	if err != nil {
@@ -88,16 +95,20 @@ func TestDeleteTopic(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topic
-	store.CreateTopic("test-topic")
+	err := store.CreateTopic("test-topic")
+	if err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
 
 	// Delete topic
-	err := store.DeleteTopic("test-topic")
+	err = store.DeleteTopic("test-topic")
 	if err != nil {
 		t.Fatalf("Failed to delete topic: %v", err)
 	}
 
 	// Verify it's gone
-	exists, _ := store.TopicExists("test-topic")
+	var exists bool
+	exists, _ = store.TopicExists("test-topic")
 	if exists {
 		t.Fatal("Topic should not exist after deletion")
 	}
@@ -134,7 +145,10 @@ func TestGetUser(t *testing.T) {
 	}
 
 	// Create user
-	store.CreateUser("testuser", "hashedpassword", "publisher")
+	err = store.CreateUser("testuser", "hashedpassword", "publisher")
+	if err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
 
 	// Get user
 	user, err = store.GetUser("testuser")
@@ -164,9 +178,16 @@ func TestListUsers(t *testing.T) {
 	initialCount := len(users)
 
 	// Create users
-	store.CreateUser("user1", "hash1", "admin")
-	store.CreateUser("user2", "hash2", "publisher")
-	store.CreateUser("user3", "hash3", "subscriber")
+	// Create users
+	if err := store.CreateUser("user1", "hash1", "admin"); err != nil {
+		t.Fatalf("Failed to create user1: %v", err)
+	}
+	if err := store.CreateUser("user2", "hash2", "publisher"); err != nil {
+		t.Fatalf("Failed to create user2: %v", err)
+	}
+	if err := store.CreateUser("user3", "hash3", "subscriber"); err != nil {
+		t.Fatalf("Failed to create user3: %v", err)
+	}
 
 	users, err = store.ListUsers()
 	if err != nil {
@@ -182,10 +203,14 @@ func TestDeleteUser(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create user
-	store.CreateUser("testuser", "hash", "admin")
+	// Create user
+	err := store.CreateUser("testuser", "hash", "admin")
+	if err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
 
 	// Delete user
-	err := store.DeleteUser("testuser")
+	err = store.DeleteUser("testuser")
 	if err != nil {
 		t.Fatalf("Failed to delete user: %v", err)
 	}
@@ -208,11 +233,17 @@ func TestAddSubscription(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topic and user
-	store.CreateTopic("test-topic")
-	store.CreateUser("testuser", "hash", "subscriber")
+	// Create topic and user
+	if err := store.CreateTopic("test-topic"); err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
+	if err := store.CreateUser("testuser", "hash", "subscriber"); err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
 
 	// Add subscription
-	err := store.AddSubscription("test-topic", "device-token-123", "fcm", "testuser")
+	var err error
+	err = store.AddSubscription("test-topic", "device-token-123", "fcm", "testuser")
 	if err != nil {
 		t.Fatalf("Failed to add subscription: %v", err)
 	}
@@ -235,14 +266,27 @@ func TestGetSubscribers(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topic
-	store.CreateTopic("test-topic")
-	store.CreateUser("user1", "hash", "subscriber")
-	store.CreateUser("user2", "hash", "subscriber")
+	// Create topic
+	if err := store.CreateTopic("test-topic"); err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
+	if err := store.CreateUser("user1", "hash", "subscriber"); err != nil {
+		t.Fatalf("Failed to create user1: %v", err)
+	}
+	if err := store.CreateUser("user2", "hash", "subscriber"); err != nil {
+		t.Fatalf("Failed to create user2: %v", err)
+	}
 
 	// Add multiple subscriptions
-	store.AddSubscription("test-topic", "token1", "fcm", "user1")
-	store.AddSubscription("test-topic", "token2", "fcm", "user2")
-	store.AddSubscription("test-topic", "token3", "mock", "user1")
+	if err := store.AddSubscription("test-topic", "token1", "fcm", "user1"); err != nil {
+		t.Fatalf("Failed to add sub1: %v", err)
+	}
+	if err := store.AddSubscription("test-topic", "token2", "fcm", "user2"); err != nil {
+		t.Fatalf("Failed to add sub2: %v", err)
+	}
+	if err := store.AddSubscription("test-topic", "token3", "mock", "user1"); err != nil {
+		t.Fatalf("Failed to add sub3: %v", err)
+	}
 
 	subs, err := store.GetSubscribers("test-topic")
 	if err != nil {
@@ -258,7 +302,11 @@ func TestSaveMessage(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topic
-	store.CreateTopic("test-topic")
+	// Create topic
+	err := store.CreateTopic("test-topic")
+	if err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
 
 	// Save message
 	payload := []byte(`{"message": "Hello World"}`)
@@ -276,12 +324,21 @@ func TestGetRecentMessages(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topic
-	store.CreateTopic("test-topic")
+	// Create topic
+	if err := store.CreateTopic("test-topic"); err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
 
 	// Save multiple messages
-	store.SaveMessage("test-topic", []byte(`{"msg": "1"}`))
-	store.SaveMessage("test-topic", []byte(`{"msg": "2"}`))
-	store.SaveMessage("test-topic", []byte(`{"msg": "3"}`))
+	if _, err := store.SaveMessage("test-topic", []byte(`{"msg": "1"}`)); err != nil {
+		t.Fatalf("Failed to save msg1: %v", err)
+	}
+	if _, err := store.SaveMessage("test-topic", []byte(`{"msg": "2"}`)); err != nil {
+		t.Fatalf("Failed to save msg2: %v", err)
+	}
+	if _, err := store.SaveMessage("test-topic", []byte(`{"msg": "3"}`)); err != nil {
+		t.Fatalf("Failed to save msg3: %v", err)
+	}
 
 	// Get recent messages
 	messages, err := store.GetRecentMessages("test-topic", 10)
@@ -306,9 +363,16 @@ func TestClearTopicMessages(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topic and add messages
-	store.CreateTopic("test-topic")
-	store.SaveMessage("test-topic", []byte(`{"msg": "1"}`))
-	store.SaveMessage("test-topic", []byte(`{"msg": "2"}`))
+	// Create topic and add messages
+	if err := store.CreateTopic("test-topic"); err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
+	if _, err := store.SaveMessage("test-topic", []byte(`{"msg": "1"}`)); err != nil {
+		t.Fatalf("Failed to save msg1: %v", err)
+	}
+	if _, err := store.SaveMessage("test-topic", []byte(`{"msg": "2"}`)); err != nil {
+		t.Fatalf("Failed to save msg2: %v", err)
+	}
 
 	// Clear messages
 	err := store.ClearTopicMessages("test-topic")
@@ -337,7 +401,11 @@ func TestHasAdminUser(t *testing.T) {
 	}
 
 	// Create admin user
-	store.CreateUser("admin", "hash", "admin")
+	// Create admin user
+	err = store.CreateUser("admin", "hash", "admin")
+	if err != nil {
+		t.Fatalf("Failed to create admin: %v", err)
+	}
 
 	// Should have admin user now
 	hasAdmin, err = store.HasAdminUser()
@@ -363,10 +431,19 @@ func TestGetSubscriptionCount(t *testing.T) {
 	}
 
 	// Add subscriptions
-	store.CreateTopic("topic1")
-	store.CreateUser("user1", "hash", "subscriber")
-	store.AddSubscription("topic1", "token1", "fcm", "user1")
-	store.AddSubscription("topic1", "token2", "fcm", "user1")
+	// Add subscriptions
+	if err := store.CreateTopic("topic1"); err != nil {
+		t.Fatalf("Failed to create topic1: %v", err)
+	}
+	if err := store.CreateUser("user1", "hash", "subscriber"); err != nil {
+		t.Fatalf("Failed to create user1: %v", err)
+	}
+	if err := store.AddSubscription("topic1", "token1", "fcm", "user1"); err != nil {
+		t.Fatalf("Failed to add sub1: %v", err)
+	}
+	if err := store.AddSubscription("topic1", "token2", "fcm", "user1"); err != nil {
+		t.Fatalf("Failed to add sub2: %v", err)
+	}
 
 	count, err = store.GetSubscriptionCount()
 	if err != nil {
@@ -382,9 +459,16 @@ func TestRemoveSubscription(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topic and add subscription
-	store.CreateTopic("test-topic")
-	store.CreateUser("user1", "hash", "subscriber")
-	store.AddSubscription("test-topic", "token1", "fcm", "user1")
+	// Create topic and add subscription
+	if err := store.CreateTopic("test-topic"); err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
+	if err := store.CreateUser("user1", "hash", "subscriber"); err != nil {
+		t.Fatalf("Failed to create user1: %v", err)
+	}
+	if err := store.AddSubscription("test-topic", "token1", "fcm", "user1"); err != nil {
+		t.Fatalf("Failed to add sub: %v", err)
+	}
 
 	// Verify subscription exists
 	subs, _ := store.GetSubscribers("test-topic")
@@ -410,11 +494,22 @@ func TestClearTopicSubscribers(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topic and add multiple subscriptions
-	store.CreateTopic("test-topic")
-	store.CreateUser("user1", "hash", "subscriber")
-	store.CreateUser("user2", "hash", "subscriber")
-	store.AddSubscription("test-topic", "token1", "fcm", "user1")
-	store.AddSubscription("test-topic", "token2", "fcm", "user2")
+	// Create topic and add multiple subscriptions
+	if err := store.CreateTopic("test-topic"); err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
+	if err := store.CreateUser("user1", "hash", "subscriber"); err != nil {
+		t.Fatalf("Failed to create user1: %v", err)
+	}
+	if err := store.CreateUser("user2", "hash", "subscriber"); err != nil {
+		t.Fatalf("Failed to create user2: %v", err)
+	}
+	if err := store.AddSubscription("test-topic", "token1", "fcm", "user1"); err != nil {
+		t.Fatalf("Failed to add sub1: %v", err)
+	}
+	if err := store.AddSubscription("test-topic", "token2", "fcm", "user2"); err != nil {
+		t.Fatalf("Failed to add sub2: %v", err)
+	}
 
 	// Clear all subscribers
 	err := store.ClearTopicSubscribers("test-topic")
@@ -434,11 +529,22 @@ func TestGetSubscriptionsByUser(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topics and add subscriptions
-	store.CreateTopic("topic1")
-	store.CreateTopic("topic2")
-	store.CreateUser("user1", "hash", "subscriber")
-	store.AddSubscription("topic1", "token1", "fcm", "user1")
-	store.AddSubscription("topic2", "token2", "fcm", "user1")
+	// Create topics and add subscriptions
+	if err := store.CreateTopic("topic1"); err != nil {
+		t.Fatalf("Failed to create topic1: %v", err)
+	}
+	if err := store.CreateTopic("topic2"); err != nil {
+		t.Fatalf("Failed to create topic2: %v", err)
+	}
+	if err := store.CreateUser("user1", "hash", "subscriber"); err != nil {
+		t.Fatalf("Failed to create user1: %v", err)
+	}
+	if err := store.AddSubscription("topic1", "token1", "fcm", "user1"); err != nil {
+		t.Fatalf("Failed to add sub1: %v", err)
+	}
+	if err := store.AddSubscription("topic2", "token2", "fcm", "user1"); err != nil {
+		t.Fatalf("Failed to add sub2: %v", err)
+	}
 
 	// Get user's subscriptions
 	subs, err := store.GetSubscriptionsByUser("user1")
@@ -476,7 +582,10 @@ func TestEnqueueMessage(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topic and save message first
-	store.CreateTopic("test-topic")
+	// Create topic and save message first
+	if err := store.CreateTopic("test-topic"); err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
 	msgID, _ := store.SaveMessage("test-topic", []byte(`{"message": "test"}`))
 
 	// Enqueue message for delivery
@@ -500,13 +609,21 @@ func TestGetPendingMessages(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topic and save messages
-	store.CreateTopic("test-topic")
+	// Create topic and save messages
+	if err := store.CreateTopic("test-topic"); err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
 	msgID1, _ := store.SaveMessage("test-topic", []byte(`{"msg": "1"}`))
 	msgID2, _ := store.SaveMessage("test-topic", []byte(`{"msg": "2"}`))
 
 	// Enqueue messages for same token
-	store.EnqueueMessage(msgID1, "device-token-1")
-	store.EnqueueMessage(msgID2, "device-token-1")
+	// Enqueue messages for same token
+	if _, err := store.EnqueueMessage(msgID1, "device-token-1"); err != nil {
+		t.Fatalf("Failed to enqueue msg1: %v", err)
+	}
+	if _, err := store.EnqueueMessage(msgID2, "device-token-1"); err != nil {
+		t.Fatalf("Failed to enqueue msg2: %v", err)
+	}
 
 	// Get pending messages
 	pending, err := store.GetPendingMessages("device-token-1")
@@ -523,9 +640,14 @@ func TestMarkDelivered(t *testing.T) {
 	store := setupTestStore(t)
 
 	// Create topic, save message, and enqueue it
-	store.CreateTopic("test-topic")
+	// Create topic, save message, and enqueue it
+	if err := store.CreateTopic("test-topic"); err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
 	msgID, _ := store.SaveMessage("test-topic", []byte(`{"msg": "test"}`))
-	store.EnqueueMessage(msgID, "device-token-1")
+	if _, err := store.EnqueueMessage(msgID, "device-token-1"); err != nil {
+		t.Fatalf("Failed to enqueue msg: %v", err)
+	}
 
 	// Get pending messages (should be 1)
 	pending, _ := store.GetPendingMessages("device-token-1")
@@ -616,9 +738,15 @@ func TestGetTotalMessagesSent(t *testing.T) {
 	}
 
 	// Save some messages
-	store.CreateTopic("topic1")
-	store.SaveMessage("topic1", []byte(`{"msg": "1"}`))
-	store.SaveMessage("topic1", []byte(`{"msg": "2"}`))
+	if err := store.CreateTopic("topic1"); err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
+	if _, err := store.SaveMessage("topic1", []byte(`{"msg": "1"}`)); err != nil {
+		t.Fatalf("Failed to save msg1: %v", err)
+	}
+	if _, err := store.SaveMessage("topic1", []byte(`{"msg": "2"}`)); err != nil {
+		t.Fatalf("Failed to save msg2: %v", err)
+	}
 
 	// Count should be 2
 	count, err = store.GetTotalMessagesSent()

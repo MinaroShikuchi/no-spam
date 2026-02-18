@@ -12,15 +12,20 @@ import (
 	"time"
 )
 
+func stringPtr(s string) *string {
+	return &s
+}
+
 const baseURL = "https://localhost:8443"
 
 func TestMain(m *testing.M) {
 	// 1. Setup Config
 	cfg := Config{
-		Addr:     ":8443",
-		CertFile: "certs/cert.pem",
-		KeyFile:  "certs/key.pem",
-		HTTPMode: false,
+		Addr:                 ":8443",
+		CertFile:             "certs/cert.pem",
+		KeyFile:              "certs/key.pem",
+		HTTPMode:             false,
+		InitialAdminPassword: stringPtr("UOOOWWW4"),
 	}
 
 	// 2. Start Server
@@ -277,7 +282,9 @@ func TestE2E_SubscriberFlow(t *testing.T) {
 
 	// Create subscriber user
 	t.Log("Step 2: Create subscriber user")
-	makeRequest(t, "POST", "/admin/users", map[string]string{
+	// Create subscriber user
+	t.Log("Step 2: Create subscriber user")
+	_, _ = makeRequest(t, "POST", "/admin/users", map[string]string{
 		"username": "test-subscriber",
 		"password": "test123",
 		"role":     "subscriber",
@@ -291,7 +298,7 @@ func TestE2E_SubscriberFlow(t *testing.T) {
 	// Create topic
 	topicName := fmt.Sprintf("test-sub-topic-%d", time.Now().Unix())
 	t.Log("Step 4: Create topic")
-	makeRequest(t, "POST", "/admin/topics", map[string]string{
+	_, _ = makeRequest(t, "POST", "/admin/topics", map[string]string{
 		"name": topicName,
 	}, adminToken)
 

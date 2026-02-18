@@ -27,11 +27,12 @@ import (
 )
 
 type Config struct {
-	Addr     string
-	CertFile string
-	KeyFile  string
-	HTTPMode bool
-	FCMCreds string
+	Addr                 string
+	CertFile             string
+	KeyFile              string
+	HTTPMode             bool
+	FCMCreds             string
+	InitialAdminPassword *string
 }
 
 func main() {
@@ -40,14 +41,16 @@ func main() {
 	addr := flag.String("addr", ":8443", "Address to listen on")
 	fcmCreds := flag.String("fcm-creds", "", "Path to Firebase credentials file (optional)")
 	httpMode := flag.Bool("http", false, "Run in HTTP mode (disable TLS)")
+	initialAdminPassword := flag.String("initial-admin-password", "", "Initial password for admin user (optional)")
 	flag.Parse()
 
 	cfg := Config{
-		Addr:     *addr,
-		CertFile: *certFile,
-		KeyFile:  *keyFile,
-		HTTPMode: *httpMode,
-		FCMCreds: *fcmCreds,
+		Addr:                 *addr,
+		CertFile:             *certFile,
+		KeyFile:              *keyFile,
+		HTTPMode:             *httpMode,
+		FCMCreds:             *fcmCreds,
+		InitialAdminPassword: initialAdminPassword,
 	}
 
 	srv, err := run(cfg)
@@ -94,7 +97,7 @@ func run(cfg Config) (*http.Server, error) {
 	}
 
 	// Check for admin user (logic kept same)
-	setupAdminUser(s)
+	setupAdminUser(s, cfg.InitialAdminPassword)
 
 	// Initialize Hub
 	h := hub.NewHub(s)
@@ -186,7 +189,7 @@ func run(cfg Config) (*http.Server, error) {
 	return server, nil
 }
 
-func setupAdminUser(s store.Store) {
+func setupAdminUser(s store.Store, initialPassword *string) {
 	hasAdmin, err := s.HasAdminUser()
 	if err != nil {
 		log.Printf("[AUTH] Failed to check for admin user: %v", err)
@@ -214,14 +217,20 @@ func setupAdminUser(s store.Store) {
 		return
 	}
 
-	// Generate random password
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	var b [8]byte
-	for i := 0; i < 8; i++ {
-		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
-		time.Sleep(1 * time.Nanosecond)
+	// Determine password
+	var password string
+	if initialPassword != nil && *initialPassword != "" {
+		password = *initialPassword
+	} else {
+		// Generate random password
+		const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+		var b [8]byte
+		for i := 0; i < 8; i++ {
+			b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+			time.Sleep(1 * time.Nanosecond)
+		}
+		password = string(b[:])
 	}
-	password := string(b[:])
 
 	// Hash password
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)

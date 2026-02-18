@@ -27,8 +27,9 @@ func TestSubscribeHandler(t *testing.T) {
 	handler := SubscribeHandler(h)
 
 	// Create topic and user
-	s.CreateTopic("test-topic")
-	s.CreateUser("testuser", "hash", "subscriber")
+	// Create topic and user
+	_ = s.CreateTopic("test-topic")
+	_ = s.CreateUser("testuser", "hash", "subscriber")
 
 	tests := []struct {
 		name           string
@@ -102,9 +103,10 @@ func TestUnsubscribeHandler(t *testing.T) {
 	handler := UnsubscribeHandler(h)
 
 	// Setup
-	s.CreateTopic("test-topic")
-	s.CreateUser("testuser", "hash", "subscriber")
-	s.AddSubscription("test-topic", "device-token-123", "mock", "testuser")
+	// Setup
+	_ = s.CreateTopic("test-topic")
+	_ = s.CreateUser("testuser", "hash", "subscriber")
+	_ = s.AddSubscription("test-topic", "device-token-123", "mock", "testuser")
 
 	tests := []struct {
 		name           string
@@ -156,8 +158,9 @@ func TestSendHandler(t *testing.T) {
 	handler := SendHandler(h)
 
 	// Create topic
-	s.CreateTopic("test-topic")
-	s.CreateUser("publisher", "hash", "publisher")
+	// Create topic
+	_ = s.CreateTopic("test-topic")
+	_ = s.CreateUser("publisher", "hash", "publisher")
 
 	tests := []struct {
 		name           string
@@ -211,11 +214,12 @@ func TestTopicsHandler(t *testing.T) {
 	handler := TopicsHandler(h)
 
 	// Setup
-	s.CreateTopic("topic1")
-	s.CreateTopic("topic2")
-	s.CreateUser("testuser", "hash", "subscriber")
-	s.AddSubscription("topic1", "token1", "mock", "testuser")
-	s.AddSubscription("topic2", "token2", "mock", "testuser")
+	// Setup
+	_ = s.CreateTopic("topic1")
+	_ = s.CreateTopic("topic2")
+	_ = s.CreateUser("testuser", "hash", "subscriber")
+	_ = s.AddSubscription("topic1", "token1", "mock", "testuser")
+	_ = s.AddSubscription("topic2", "token2", "mock", "testuser")
 
 	c, w := setupTestContext()
 	c.Set("username", "testuser")
@@ -227,22 +231,15 @@ func TestTopicsHandler(t *testing.T) {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
 
-// TopicsHandler returns array of subscription objects directly
-var subs []map[string]interface{}
-if err := json.Unmarshal(w.Body.Bytes(), &subs); err != nil {
-t.Fatalf("Failed to unmarshal: %v", err)
+	// TopicsHandler returns array of subscription objects directly
+	var subs []map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &subs); err != nil {
+		t.Fatalf("Failed to unmarshal: %v", err)
+	}
+	if len(subs) != 2 {
+		t.Errorf("Expected 2 subscriptions,got %d", len(subs))
+	}
 }
-if len(subs) != 2 {
-t.Errorf("Expected 2 subscriptions,got %d", len(subs))
-}
-}
-
-
-
-
-
-
-
 
 // TestStatsHandler tests statistics endpoint
 func TestStatsHandler(t *testing.T) {
@@ -250,10 +247,11 @@ func TestStatsHandler(t *testing.T) {
 	handler := StatsHandler(h)
 
 	// Create some data
-	s.CreateTopic("topic1")
-	s.CreateUser("user1", "hash", "subscriber")
-	s.AddSubscription("topic1", "token1", "mock", "user1")
-	s.SaveMessage("topic1", []byte(`{"msg": "test"}`))
+	// Create some data
+	_ = s.CreateTopic("topic1")
+	_ = s.CreateUser("user1", "hash", "subscriber")
+	_ = s.AddSubscription("topic1", "token1", "mock", "user1")
+	_, _ = s.SaveMessage("topic1", []byte(`{"msg": "test"}`))
 
 	c, w := setupTestContext()
 	c.Request = httptest.NewRequest("GET", "/stats", nil)

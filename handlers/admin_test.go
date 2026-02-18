@@ -79,11 +79,13 @@ func TestDeleteTopicHandler(t *testing.T) {
 	handler := DeleteTopicHandler(h)
 
 	// Create topic with message
-	s.CreateTopic("topic-with-message")
-	s.SaveMessage("topic-with-message", []byte(`{"msg": "test"}`))
+	// Create topic with message
+	_ = s.CreateTopic("topic-with-message")
+	_, _ = s.SaveMessage("topic-with-message", []byte(`{"msg": "test"}`))
 
 	// Create empty topic
-	s.CreateTopic("empty-topic")
+	// Create empty topic
+	_ = s.CreateTopic("empty-topic")
 
 	tests := []struct {
 		name           string
@@ -124,8 +126,9 @@ func TestListTopicsHandler(t *testing.T) {
 	handler := ListTopicsHandler(h)
 
 	// Create topics
-	s.CreateTopic("topic1")
-	s.CreateTopic("topic2")
+	// Create topics
+	_ = s.CreateTopic("topic1")
+	_ = s.CreateTopic("topic2")
 
 	c, w := setupTestContext()
 	c.Request = httptest.NewRequest("GET", "/admin/topics", nil)
@@ -150,9 +153,10 @@ func TestGetMessagesHandler(t *testing.T) {
 	handler := GetMessagesHandler(h)
 
 	// Create topic and add messages
-	s.CreateTopic("test-topic")
-	s.SaveMessage("test-topic", []byte(`{"msg": "1"}`))
-	s.SaveMessage("test-topic", []byte(`{"msg": "2"}`))
+	// Create topic and add messages
+	_ = s.CreateTopic("test-topic")
+	_, _ = s.SaveMessage("test-topic", []byte(`{"msg": "1"}`))
+	_, _ = s.SaveMessage("test-topic", []byte(`{"msg": "2"}`))
 
 	c, w := setupTestContext()
 	c.Params = gin.Params{{Key: "name", Value: "test-topic"}}
@@ -180,8 +184,9 @@ func TestClearMessagesHandler(t *testing.T) {
 	handler := ClearMessagesHandler(h)
 
 	// Create topic and add messages
-	s.CreateTopic("test-topic")
-	s.SaveMessage("test-topic", []byte(`{"msg": "1"}`))
+	// Create topic and add messages
+	_ = s.CreateTopic("test-topic")
+	_, _ = s.SaveMessage("test-topic", []byte(`{"msg": "1"}`))
 
 	c, w := setupTestContext()
 	c.Params = gin.Params{{Key: "name", Value: "test-topic"}}
@@ -206,9 +211,10 @@ func TestClearSubscribersHandler(t *testing.T) {
 	handler := ClearSubscribersHandler(h)
 
 	// Create topic and add subscribers
-	s.CreateTopic("test-topic")
-	s.CreateUser("user1", "hash", "subscriber")
-	s.AddSubscription("test-topic", "token1", "mock", "user1")
+	// Create topic and add subscribers
+	_ = s.CreateTopic("test-topic")
+	_ = s.CreateUser("user1", "hash", "subscriber")
+	_ = s.AddSubscription("test-topic", "token1", "mock", "user1")
 
 	c, w := setupTestContext()
 	c.Params = gin.Params{{Key: "name", Value: "test-topic"}}
@@ -233,9 +239,10 @@ func TestGetSubscribersHandler(t *testing.T) {
 	handler := GetSubscribersHandler(h)
 
 	// Create topic and subscribers
-	s.CreateTopic("test-topic")
-	s.CreateUser("user1", "hash", "subscriber")
-	s.AddSubscription("test-topic", "token1", "mock", "user1")
+	// Create topic and subscribers
+	_ = s.CreateTopic("test-topic")
+	_ = s.CreateUser("user1", "hash", "subscriber")
+	_ = s.AddSubscription("test-topic", "token1", "mock", "user1")
 
 	c, w := setupTestContext()
 	c.Params = gin.Params{{Key: "name", Value: "test-topic"}}
