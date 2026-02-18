@@ -216,6 +216,36 @@ func (s *SQLiteStore) CreateUser(username, passwordHash, role string) error {
 	return err
 }
 
+func (s *SQLiteStore) DeleteUser(username string) error {
+	res, err := s.db.Exec(`DELETE FROM users WHERE username = ?`, username)
+	if err != nil {
+		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ListUsers() ([]User, error) {
+	rows, err := s.db.Query(`SELECT username, password_hash, role FROM users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.Username, &u.PasswordHash, &u.Role); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, nil
+}
+
 func (s *SQLiteStore) GetUser(username string) (*User, error) {
 	var u User
 	err := s.db.QueryRow(`SELECT username, password_hash, role FROM users WHERE username = ?`, username).Scan(&u.Username, &u.PasswordHash, &u.Role)
@@ -331,15 +361,13 @@ func (s *SQLiteStore) GetPendingMessages(token string) ([]QueueItem, error) {
 }
 
 func (s *SQLiteStore) GetAllPendingMessages() ([]QueueItem, error) {
-	query := `
-		SELECT q.id, q.message_id, q.token, sub.provider, q.status, m.payload 
+	rows, err := s.db.Query(`
+		SELECT q.id, q.message_id, q.token, s.provider, q.status, m.payload, m.created_at
 		FROM queue q
+		JOIN subscriptions s ON q.token = s.token
 		JOIN messages m ON q.message_id = m.id
-		JOIN subscriptions sub ON q.token = sub.token
 		WHERE q.status = 'pending'
-		ORDER BY m.created_at ASC
-	`
-	rows, err := s.db.Query(query)
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -347,11 +375,36 @@ func (s *SQLiteStore) GetAllPendingMessages() ([]QueueItem, error) {
 
 	var items []QueueItem
 	for rows.Next() {
-		var item QueueItem
-		if err := rows.Scan(&item.ID, &item.MessageID, &item.Token, &item.Provider, &item.Status, &item.Payload); err != nil {
+		var i QueueItem
+		if err := rows.Scan(&i.ID, &i.MessageID, &i.Token, &i.Provider, &i.Status, &i.Payload, &i.CreatedAt); err != nil {
 			return nil, err
 		}
-		items = append(items, item)
+		items = append(items, i)
+	}
+	return items, nil
+}
+
+// GetPendingMessagesByTopic retrieves all pending messages for a specific topic.
+func (s *SQLiteStore) GetPendingMessagesByTopic(topic string) ([]QueueItem, error) {
+	rows, err := s.db.Query(`
+		SELECT q.id, q.message_id, q.token, s.provider, q.status, m.payload, m.created_at
+		FROM queue q
+		JOIN subscriptions s ON q.token = s.token
+		JOIN messages m ON q.message_id = m.id
+		WHERE q.status = 'pending' AND m.topic = ?
+	`, topic)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []QueueItem
+	for rows.Next() {
+		var i QueueItem
+		if err := rows.Scan(&i.ID, &i.MessageID, &i.Token, &i.Provider, &i.Status, &i.Payload, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	return items, nil
 }

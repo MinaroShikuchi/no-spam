@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"no-spam/hub"
@@ -52,6 +53,11 @@ func SubscribeHandler(h *hub.Hub) gin.HandlerFunc {
 			log.Printf("Subscribe error: %v", err)
 			if err == hub.ErrTopicNotFound {
 				c.JSON(http.StatusNotFound, gin.H{"error": "Topic not found"})
+				return
+			}
+			// Handle duplicate subscription (make it idempotent)
+			if strings.Contains(err.Error(), "UNIQUE constraint") {
+				c.JSON(http.StatusOK, gin.H{"message": "Already subscribed"})
 				return
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

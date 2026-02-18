@@ -1,3 +1,5 @@
 *.pem
 no-spam
 *.db
+coverage.out
+.vscode/settings.json

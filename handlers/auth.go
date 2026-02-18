@@ -11,7 +11,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func RegisterHandler(s store.Store) gin.HandlerFunc {
+func CreateUserHandler(s store.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			Username string `json:"username" binding:"required"`
@@ -24,16 +24,21 @@ func RegisterHandler(s store.Store) gin.HandlerFunc {
 			return
 		}
 
+		// Validate Role
+		if req.Role == "" {
+			req.Role = "subscriber"
+		}
+		validRoles := map[string]bool{"admin": true, "publisher": true, "subscriber": true}
+		if !validRoles[req.Role] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role. Must be admin, publisher, or subscriber"})
+			return
+		}
+
 		// Hash password
 		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
 			return
-		}
-
-		// Default role
-		if req.Role == "" {
-			req.Role = "subscriber"
 		}
 
 		if err := s.CreateUser(req.Username, string(hash), req.Role); err != nil {
@@ -45,7 +50,60 @@ func RegisterHandler(s store.Store) gin.HandlerFunc {
 			return
 		}
 
-		c.JSON(http.StatusCreated, gin.H{"message": "User created"})
+		c.JSON(http.StatusCreated, gin.H{"message": "User created", "username": req.Username, "role": req.Role})
+	}
+}
+
+func DeleteUserHandler(s store.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		username := c.Param("username")
+		if username == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Username required"})
+			return
+		}
+
+		// Prevent deleting self? Use middleware.GetUsername(c)
+		operator := middleware.GetUsername(c)
+		if operator == username {
+			c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete yourself"})
+			return
+		}
+
+		if err := s.DeleteUser(username); err != nil {
+			if strings.Contains(err.Error(), "user not found") {
+				c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "User deleted"})
+	}
+}
+
+func ListUsersHandler(s store.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		users, err := s.ListUsers()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list users"})
+			return
+		}
+
+		type UserResponse struct {
+			Username string `json:"username"`
+			Role     string `json:"role"`
+		}
+
+		var resp []UserResponse
+		for _, u := range users {
+			resp = append(resp, UserResponse{
+				Username: u.Username,
+				Role:     u.Role,
+			})
+		}
+
+		c.JSON(http.StatusOK, resp)
 	}
 }
 

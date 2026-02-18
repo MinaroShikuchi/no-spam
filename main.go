@@ -115,8 +115,7 @@ func main() {
 	router.Use(gin.Recovery())
 
 	// Public routes (no auth)
-	router.POST("/register", handlers.RegisterHandler(s))
-	router.POST("/login", handlers.LoginHandler(s))
+	router.POST("/admin/login", handlers.LoginHandler(s))
 
 	// Authenticated routes
 	auth := router.Group("/")
@@ -152,7 +151,11 @@ func main() {
 			admin.DELETE("/topics/:name/messages", handlers.ClearMessagesHandler(h))
 			admin.GET("/topics/:name/subscribers", handlers.GetSubscribersHandler(h))
 			admin.DELETE("/topics/:name/subscribers", handlers.ClearSubscribersHandler(h))
-			admin.GET("/token", handlers.GetTokenHandler())
+			admin.GET("/topics/:name/queue", handlers.GetQueueHandler(h))
+			admin.POST("/users", handlers.CreateUserHandler(s))             // New route
+			admin.DELETE("/users/:username", handlers.DeleteUserHandler(s)) // New route
+			admin.GET("/users", handlers.ListUsersHandler(s))               // New route
+			admin.GET("/token", handlers.GetTokenHandler(s))
 		}
 	}
 

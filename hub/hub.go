@@ -267,6 +267,18 @@ func (h *Hub) Unsubscribe(topic string, token string) error {
 	return h.store.RemoveSubscription(topic, token)
 }
 
+// GetQueue retrieves pending messages for a specific topic.
+func (h *Hub) GetQueue(topic string) ([]store.QueueItem, error) {
+	exists, err := h.store.TopicExists(topic)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrTopicNotFound
+	}
+	return h.store.GetPendingMessagesByTopic(topic)
+}
+
 // Stats tracking proxies to store
 func (h *Hub) GetTotalMessagesSent() int64 {
 	count, _ := h.store.GetTotalMessagesSent()

@@ -6,6 +6,7 @@ import (
 
 	"no-spam/hub"
 	"no-spam/middleware"
+	"no-spam/store"
 
 	"github.com/gin-gonic/gin"
 )
@@ -116,20 +117,27 @@ func ClearSubscribersHandler(h *hub.Hub) gin.HandlerFunc {
 	}
 }
 
-func GetTokenHandler() gin.HandlerFunc {
+func GetTokenHandler(s store.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		role := c.Query("role")
-		if role == "" {
-			role = "subscriber"
-		}
-
-		username := middleware.GetUsername(c)
+		username := c.Query("username")
 		if username == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "username parameter is required"})
 			return
 		}
 
-		token, err := middleware.GenerateToken(username, role)
+		// Verify user exists
+		user, err := s.GetUser(username)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check user"})
+			return
+		}
+		if user == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+			return
+		}
+
+		// Generate token with user's stored role
+		token, err := middleware.GenerateToken(user.Username, user.Role)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 			return
@@ -137,8 +145,26 @@ func GetTokenHandler() gin.HandlerFunc {
 
 		c.JSON(http.StatusOK, gin.H{
 			"token":    token,
-			"role":     role,
-			"username": username,
+			"role":     user.Role,
+			"username": user.Username,
 		})
+	}
+}
+
+func GetQueueHandler(h *hub.Hub) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		name := c.Param("name")
+
+		queue, err := h.GetQueue(name)
+		if err != nil {
+			if err == hub.ErrTopicNotFound {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Topic not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get queue"})
+			return
+		}
+
+		c.JSON(http.StatusOK, queue)
 	}
 }

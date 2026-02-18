@@ -13,9 +13,15 @@ import (
 	"google.golang.org/api/option"
 )
 
+// FCMSender defines the interface for sending messages to FCM.
+// This allows mocking the firebase messaging client.
+type FCMSender interface {
+	Send(ctx context.Context, message *messaging.Message) (string, error)
+}
+
 // FCMConnector sends messages via Google's Firebase Cloud Messaging.
 type FCMConnector struct {
-	client *messaging.Client
+	client FCMSender
 }
 
 // NewFCMConnector creates a new FCMConnector.

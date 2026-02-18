@@ -71,19 +71,19 @@ go build -o no-spam .
 
 ### Authentication
 
-All API endpoints (except login/register) require a **Bearer Token**.
+All API endpoints (except login) require a **Bearer Token**.
 Roles:
 - **subscriber**: Can subscribe/unsubscribe.
 - **publisher**: Can publish messages.
 - **admin**: Full access to admin endpoints.
 
 #### 1. Public Endpoints
-- **POST** `/login`: Get JWT token.
-- **POST** `/register`: Create new user (default role: `subscriber`).
+- **POST** `/admin/login`: Get JWT token using your credentials.
 
 #### 2. Admin Token Generation
-Admins can generate tokens for any role:
-**GET** `/admin/token?role=publisher`
+Admins can generate tokens for specific users (for testing/debugging):
+**GET** `/admin/token?username=bob`
+Returns a token for user `bob` with their stored role.
 Headers: `Authorization: Bearer <admin-token>`
 
 ### API Usage
@@ -135,8 +135,41 @@ Requires `role: admin`.
 - **GET** `/admin/topics`: List all topics.
 - **POST** `/admin/topics`: Create a topic.
 - **DELETE** `/admin/topics/:name`: Delete a topic (must be empty).
-- **GET** `/admin/topics/:name/messages`: Inspect topic queue.
+- **GET** `/admin/topics/:name/messages`: Inspect topic message history.
+- **GET** `/admin/topics/:name/queue`: Inspect pending messages in queue.
 - **GET** `/admin/topics/:name/subscribers`: List subscribers.
+- **POST** `/admin/users`: Create a new user (role: `admin`, `publisher`, or `subscriber`).
+- **DELETE** `/admin/users/:username`: Delete a user.
+- **GET** `/admin/token`: Generate a JWT for any role for testing.
+
+Refer to [MOBILE_INTEGRATION.md](MOBILE_INTEGRATION.md) for detailed integration guides.
+
+## Testing
+
+The project includes comprehensive unit tests and E2E tests.
+
+### Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Generate coverage report
+make coverage
+
+# Generate HTML coverage report
+make coverage-html
+```
+
+### Test Coverage
+
+- **Middleware**: 93.9% coverage (Auth, JWT, Role logic)
+- **Hub**: 82.8% coverage (Routing, Queue, Subscription logic)
+- **Connectors**: 56.6% coverage (Webhook, FCM, APNS)
+- **Store layer**: 81.3% coverage
+- **Handler layer**: 66.4% coverage
+- **E2E tests**: 3 comprehensive integration tests
+- **Overall**: Significantly improved total coverage
 
 ## Extensibility
 
